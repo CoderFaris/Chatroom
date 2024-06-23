@@ -17,12 +17,13 @@ class PrivateRoomConnection(models.Model):
 class Message(models.Model):
     author = models.ForeignKey(User, related_name='author_messages', on_delete=models.CASCADE)
     content = models.TextField()
-    timestamp = models.DateTimeField()
+    timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return self.author.message
-    
-    def last_10_messages(self):
+        return f'{self.author.username}: {self.content}'
+
+    @staticmethod
+    def last_10_messages():
         return Message.objects.order_by('-timestamp').all()[:10]
 
 

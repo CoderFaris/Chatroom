@@ -1,12 +1,14 @@
 import json
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from .models import PrivateRoomConnection, PrivateChatRoom
+from .models import PrivateRoomConnection, PrivateChatRoom, Message
 from django.db.models import Count
 from django.contrib.auth.models import User
+from asgiref.sync import sync_to_async
 import uuid
 
 class ChatConsumer(AsyncWebsocketConsumer):
+
     async def connect(self):
         self.roomGroupName = 'group-chat'
         await self.channel_layer.group_add(
@@ -14,6 +16,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         await self.accept()
+
+        await self.fetch_messages()
 
         await self.channel_layer.group_send(
             self.roomGroupName,
@@ -23,12 +27,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'username': 'System',
                 'time' : '',
                 'message_id': str(uuid.uuid4())
-                
             }
         )
 
     async def disconnect(self, close_code):
-
         await self.channel_layer.group_send(
             self.roomGroupName,
             {
@@ -40,9 +42,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             }
         )
 
-
         await self.channel_layer.group_discard(
-
             self.roomGroupName,
             self.channel_name
         )
@@ -51,12 +51,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         text_data_json = json.loads(text_data)
         message_type = text_data_json['type']
 
-
         if message_type == 'chat_message':
             message = text_data_json['message']
             username = text_data_json['username']
             time = text_data_json['time']
             message_id = str(uuid.uuid4())
+
+            author_user = await self.get_user(username)
+            await self.save_message(author_user, message)
 
             await self.channel_layer.group_send(
                 self.roomGroupName,
@@ -65,7 +67,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'message': message,
                     'username': username,
                     'time': time,
-                    'message_id' : message_id
+                    'message_id': message_id
                 }
             )
         elif message_type == 'typing':
@@ -102,7 +104,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'message_id': message_id
                 }
             )
-
         elif message_type == 'reaction':
             reaction = text_data_json['reaction']
             message_id = text_data_json['message_id']
@@ -117,6 +118,44 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'username': username
                 }
             )
+
+    async def fetch_messages(self):
+        messages = await self.get_last_10_messages()
+        messages_json = await sync_to_async(self.messages_to_json)(messages)
+        print(messages_json)
+        content = {
+            'type' : 'fetch_messages',
+            'messages' : messages_json
+        }
+        
+        await self.send(text_data=json.dumps(content))
+
+    @database_sync_to_async
+    def get_last_10_messages(self):
+        return list(Message.last_10_messages())
+
+    
+    def messages_to_json(self, messages):
+        result = []
+        for message in messages:
+            result.append(self.message_to_json(message))
+        return result
+
+    
+    def message_to_json(self, message):
+        return {
+            'username': message.author.username,
+            'message': message.content,
+            'time': str(message.timestamp)
+        }
+
+    @database_sync_to_async
+    def save_message(self, author, content):
+        Message.objects.create(author=author, content=content)
+
+    @database_sync_to_async
+    def get_user(self, username):
+        return User.objects.get(username=username)
 
     async def chat_message(self, event):
         message = event['message']

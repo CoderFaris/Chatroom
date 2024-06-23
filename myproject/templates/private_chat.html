@@ -145,6 +145,7 @@
             function handleSocketMessage(e) {
                 const data = JSON.parse(e.data);
                 if (data.type === 'chat_message') {
+                    console.log(data)
                     displayMessage(data);
                 } else if (data.type === 'typing') {
                     if (data.username !== username) showTypingIndicator(data.username);
