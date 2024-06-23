@@ -1,0 +1,248 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatroom</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{% static 'css/chatroom.css' %}">
+</head>
+{% csrf_token %}
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="bg-white shadow-lg rounded-lg w-full max-w-2xl p-4">
+        <div class="flex items-center justify-between border-b pb-2 mb-4">
+            <h1 class="text-xl font-bold text-gray-800">Chatroom <i class="fas fa-comment"></i></h1>
+            {% if request.user.is_authenticated %}
+            <div class="flex items-center">
+                <span class="font-semibold text-gray-700 mr-4">{{ request.user|title }}</span>
+                <a href="{% url 'logout' %}" class="text-red-600 hover:text-red-800">
+                    <i class="fas fa-sign-out-alt"></i>
+                </a>
+            </div>
+            {% endif %}
+        </div>
+        <div id="id_chat_item_container" class="chat__item__container flex flex-col overflow-hidden h-64 mb-4 bg-gray-50 rounded-lg shadow-inner">
+            <div id="id_messages_container" class="flex-grow overflow-y-auto p-2">
+                <!-- Messages will be displayed here with a scrollbar -->
+            </div>
+            <div id="id_typing_indicator" class="typing-indicator" style="display: none;"></div>
+        </div>
+        <div class="flex items-center">
+            <input type="file" id="id_file_input" class="hidden" />
+            <button type="button" id="id_file_button" class="bg-gray-300 text-black px-4 py-2 rounded-l-lg hover:bg-gray-400">
+                <i class="fas fa-paperclip"></i>
+            </button>
+            <input type="text" id="id_message_send_input" class="flex-grow border rounded-l-lg p-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Type your message..." />
+            <button type="submit" id="id_message_send_button" class="bg-indigo-500 text-white px-4 py-2 rounded-r-lg hover:bg-indigo-600 focus:outline-none">
+                <i class="fas fa-paper-plane"></i> Send
+            </button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+
+            const username = "{{ request.user.username }}";
+            const chatSocket = new WebSocket("ws://" + window.location.host + '/ws/chat' +  "/");
+
+            chatSocket.onopen = handleSocketOpen;
+            chatSocket.onclose = handleSocketClose;
+            chatSocket.onmessage = handleSocketMessage;
+
+            let typingTimeout;
+            let isTyping = false;
+
+            const messageInput = document.querySelector("#id_message_send_input");
+            const messageSendButton = document.querySelector("#id_message_send_button");
+            const fileButton = document.querySelector("#id_file_button");
+            const fileInput = document.querySelector("#id_file_input");
+            const messageContainer = document.querySelector("#id_messages_container");
+            const typingIndicator = document.querySelector("#id_typing_indicator");
+            
+            
+            messageInput.focus();
+            messageInput.addEventListener('keyup', handleTyping);
+            messageSendButton.addEventListener('click', sendMessage);
+            fileButton.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', handleFileUpload);
+            
+
+            function handleSocketOpen(e) {
+                console.log("The connection was set up successfully!");
+            }
+
+            function handleSocketClose(e) {
+                console.log("Something unexpected happened!");
+            }
+
+            function handleTyping(e) {
+                if (e.keyCode === 13) {
+                    sendMessage();
+                } else {
+                    if (!isTyping) {
+                        isTyping = true;
+                        chatSocket.send(JSON.stringify({ type: 'typing', username }));
+                    }
+                    clearTimeout(typingTimeout);
+                    typingTimeout = setTimeout(() => {
+                        isTyping = false;
+                        chatSocket.send(JSON.stringify({ type: 'stop_typing', username }));
+                    }, 3000);
+                }
+            }
+
+            function sendMessage() {
+                const messageInput = document.querySelector("#id_message_send_input").value;
+                if (!messageInput) {
+                    alert("Warning: blank message");
+                } else {
+                    const currentTime = new Date().toLocaleTimeString();
+                    chatSocket.send(JSON.stringify({
+                        type: 'chat_message',
+                        message: messageInput,
+                        username,
+                        time: currentTime
+                    }));
+                    document.querySelector("#id_message_send_input").value = "";
+                }
+            }
+
+            function handleFileUpload(e) {
+                const file = e.target.files[0];
+                const validImageTypes = ['image/gif', 'image/jpeg', 'image/jpg', 'image/png'];
+                if (!validImageTypes.includes(file.type)) {
+                    alert("Only images and gifs are allowed");
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                fetch('/upload/', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': getCookie('csrftoken') },
+                    body: formData
+                })
+                .then(response => {
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    return response.json();
+                })
+                .then(data => {
+                    const fileUrl = data.file_url;
+                    chatSocket.send(JSON.stringify({
+                        type: 'file_message',
+                        file_name: file.name,
+                        file_url: fileUrl,
+                        username
+                    }));
+                })
+                .catch(error => {
+                    console.error('Error uploading file:', error);
+                });
+            }
+
+            function handleSocketMessage(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'chat_message') {
+                    displayMessage(data);
+                } else if (data.type === 'typing') {
+                    if (data.username !== username) showTypingIndicator(data.username);
+                } else if (data.type === 'stop_typing') {
+                    if (data.username !== username) hideTypingIndicator();
+                } else if (data.type === 'file_message') {
+                    displayFileMessage(data);
+                } else if (data.type === 'reaction') {
+                    
+
+                    setTimeout(() => {
+                        const messageElement = document.querySelector(`[data-message-id="${data.message_id}"]`);
+                        if (messageElement) {
+                            console.log('Appending reaction to message:', data.message_id);
+                            const reactionElement = document.createElement('span');
+                            reactionElement.className = 'message-reaction';
+                            reactionElement.textContent = data.reaction;
+                            messageElement.appendChild(reactionElement);
+                        } else {
+                            console.log('Message element not found for ID:', data.message_id);
+                            console.log('Current message elements:', document.querySelectorAll('.message-content'));
+                        }
+                    }, 500);
+                }
+            }
+
+
+            function displayMessage(data) {
+                const div = document.createElement("div");
+                div.className = (data.username === 'System') ? "system-message" : (data.username === username) ? "chat-message right" : "chat-message left";
+                div.innerHTML = `
+                    <div class="message-content" data-message-id="${data.message_id}">
+                        <span class="message-username">${capitalize(data.username)}</span>
+                        <span class="message-text">${data.message}</span>
+                        <span class="message-timestamp">${data.time}</span>
+                    </div>`;
+                messageContainer.appendChild(div);
+                messageContainer.scrollTop = messageContainer.scrollHeight;
+
+                const messageContent = div.querySelector('.message-content');
+                messageContent.addEventListener('dblclick', function () {
+                    console.log('double clicked');
+                    addReaction(this);
+                });
+            }
+
+
+            function displayFileMessage(data) {
+                const div = document.createElement("div");
+                div.className = (data.username === username) ? "chat-message right" : "chat-message left";
+                div.innerHTML = `
+                    <div class="message-content">
+                        <span class="message-username">${capitalize(data.username)}</span>
+                        <span class="message-text">
+                            ${data.file_url.match(/\.(jpg|png|gif)$/) ? `<img src="${data.file_url}" alt="${data.file_name}" style="max-width: 200px;"/>` : ''}
+                        </span>
+                    </div>`;
+                messageContainer.appendChild(div);
+                messageContainer.scrollTop = messageContainer.scrollHeight;
+
+                
+            }
+
+            function addReaction(messageElement) {
+                const messageId = messageElement.getAttribute('data-message-id');
+                const reaction = '❤️';
+                chatSocket.send(JSON.stringify({
+                    type: 'reaction',
+                    message_id: messageId,
+                    reaction: reaction,
+                    username: username
+                }));
+            }
+
+            
+
+            function showTypingIndicator(username) {
+                typingIndicator.textContent = `${capitalize(username)} is typing...`;
+                typingIndicator.style.display = 'block';
+            }
+
+            function hideTypingIndicator() {
+                typingIndicator.style.display = 'none';
+            }
+
+            function capitalize(string) {
+                return string.charAt(0).toUpperCase() + string.slice(1);
+            }
+
+            function getCookie(name) {
+                const cookieValue = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith(`${name}=`));
+                return cookieValue ? cookieValue.split('=')[1] : null;
+            }
+        })
+    </script>
+</body>
+
+</html>
