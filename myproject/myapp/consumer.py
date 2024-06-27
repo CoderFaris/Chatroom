@@ -1,7 +1,7 @@
 import json
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from .models import PrivateRoomConnection, PrivateChatRoom, Message
+from .models import PrivateRoomConnection, PrivateChatRoom, Message, PrivateMessage
 from django.db.models import Count
 from django.contrib.auth.models import User
 from asgiref.sync import sync_to_async
@@ -232,6 +232,7 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             await self.add_connection(room, self.user)
             await self.channel_layer.group_add(self.room_name, self.channel_name)
             await self.accept()
+            await self.fetch_messages()
             await self.channel_layer.group_send(
             self.room_name,
             {
@@ -268,6 +269,11 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             username = text_data_json['username']
             time = text_data_json['time']
             message_id = str(uuid.uuid4())
+
+            author_user = await self.get_user(username)
+            room = await self.get_room(self.room_name)
+            await self.save_message(room, author_user, message)
+
 
             await self.channel_layer.group_send(
                 self.room_name,
@@ -384,7 +390,39 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             'message_id': message_id,
             'username': username
         }))
-        
+
+    async def fetch_messages(self):
+        room = await self.get_room(self.room_name)
+        messages = await self.get_last_10_messages(room)
+        messages_json = await sync_to_async(self.messages_to_json)(messages)
+
+        content = {
+
+            'type' : 'fetch_messages',
+            'messages' : messages_json
+
+        }
+
+        await self.send(text_data=json.dumps(content))
+
+    @database_sync_to_async
+    def get_last_10_messages(self, room):
+        return list(PrivateMessage.last_10_messages(room))
+    
+    def messages_to_json(self, messages):
+        return [{'username': msg.author.username, 'message': msg.content, 'time': str(msg.timestamp)} for msg in messages]
+    
+    @database_sync_to_async
+    def save_message(self, room, author, content):
+        PrivateMessage.objects.create(room=room, author=author, content=content)
+
+    @database_sync_to_async
+    def get_user(self, username):
+        return User.objects.get(username=username)
+
+    @database_sync_to_async
+    def get_room(self, room_name):
+        return PrivateChatRoom.objects.get(name=room_name)
 
 
     async def send_message(self, event):

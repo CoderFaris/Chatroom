@@ -144,7 +144,33 @@
 
             function handleSocketMessage(e) {
                 const data = JSON.parse(e.data);
-                if (data.type === 'chat_message') {
+                if (data.type == 'fetch_messages') {
+
+                    data.messages.sort((a, b) => new Date(a.time) - new Date(b.time));
+
+                    
+                    data.messages.forEach(function(message) {
+                        const date = new Date(message.time);
+    
+                        
+                        const formattedTimestamp = date.toLocaleString('en-US', { 
+                            year: 'numeric', 
+                            month: '2-digit', 
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit'
+                        });
+
+                        
+                        message.time = formattedTimestamp;
+
+                        
+                        displayMessage(message);
+                    });
+
+                
+                } else if (data.type === 'chat_message') {
                     console.log(data)
                     displayMessage(data);
                 } else if (data.type === 'typing') {

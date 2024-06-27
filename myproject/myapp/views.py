@@ -54,6 +54,8 @@ def chatroom(request):
     return render(request, 'chatroom.html')
 
 def private_chat(request):
+    if not request.user.is_authenticated:
+        return redirect('login')
     return render(request, 'private_chat.html')
 
 

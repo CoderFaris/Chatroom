@@ -25,6 +25,19 @@ class Message(models.Model):
     @staticmethod
     def last_10_messages():
         return Message.objects.order_by('-timestamp').all()[:10]
+    
+class PrivateMessage(models.Model):
+    room = models.ForeignKey(PrivateChatRoom, related_name='messages', on_delete=models.CASCADE)
+    author = models.ForeignKey(User, related_name='private_messages', on_delete=models.CASCADE)
+    content = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.author.username}: {self.content}'
+    
+    @staticmethod
+    def last_10_messages(room):
+        return PrivateMessage.objects.filter(room=room).order_by('-timestamp').all()[:10]
 
 
     
